@@ -1,0 +1,53 @@
+{
+  "tenantId": "00000000-0000-0000-0000-000000000000",
+  "clientId": "00000000-0000-0000-0000-000000000000",
+  "certificateThumbprint": "THUMBPRINT_OF_CERT_IN_LOCALMACHINE_OR_CURRENTUSER_MY_STORE",
+
+  "outputPath": "..\\web\\data\\devices.json",
+  "historyPath": "..\\web\\data\\history.json",
+  "logPath": "..\\logs\\asset-sync.log",
+
+  "staleAfterDays": 30,
+  "includeByod": true,
+  "maxHistoryEntries": 500,
+
+  "sharePoint": {
+    "enabled": true,
+    "siteId": "contoso.sharepoint.com,<siteCollectionGuid>,<webGuid>",
+    "registerListId": "<Asset Register list GUID>",
+    "documentsListId": "<Asset Documents library GUID>",
+    "libraryUrl": "https://contoso.sharepoint.com/sites/Assets/Asset%20Documents",
+    "registerFields": {
+      "assetTag": "Title",
+      "serial": "SerialNumber",
+      "category": "Category",
+      "manufacturer": "Manufacturer",
+      "model": "Model",
+      "purchaseDate": "PurchaseDate",
+      "purchasePrice": "PurchasePrice",
+      "supplier": "Supplier",
+      "invoiceNo": "InvoiceNo",
+      "warrantyEnd": "WarrantyEnd",
+      "costCentre": "CostCentre",
+      "department": "Department",
+      "location": "Location",
+      "status": "LifecycleStatus",
+      "assignedTo": "AssignedTo",
+      "replaceDate": "ReplaceDate",
+      "notes": "Notes"
+    },
+    "documentFields": {
+      "assetKey": "AssetKey",
+      "docType": "DocType",
+      "validUntil": "ValidUntil"
+    }
+  },
+
+  "alerts": {
+    "teamsWebhookUrl": ""
+  },
+
+  "ui": {
+    "intunePortalDeviceUrl": "https://intune.microsoft.com/#view/Microsoft_Intune_Devices/DeviceSettingsMenuBlade/~/overview/mdmDeviceId/{intuneId}"
+  }
+}

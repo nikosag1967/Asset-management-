@@ -1,0 +1,10 @@
+# Real data, secrets and logs never go in git
+data/
+logs/
+web/data/devices.json
+web/data/history.json
+config.json
+*.pfx
+*.cer
+*.pem
+*.key
