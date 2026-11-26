@@ -16,7 +16,7 @@ param(
     [string]$ConfigPath = (Join-Path $PSScriptRoot '..\config.json')
 )
 
-Set-StrictMode -Version Latest
+Set-StrictMode -Version 1.0   # catches uninitialised variables; tolerant of Graph omitting null properties
 $ErrorActionPreference = 'Stop'
 
 # ---------- helpers ----------
@@ -68,8 +68,9 @@ function Invoke-GraphPaged([string]$uri) {
                 } else { throw }
             }
         }
-        foreach ($v in $resp.value) { $results.Add($v) }
-        $uri = $resp.'@odata.nextLink'
+        if ($resp.PSObject.Properties['value']) { foreach ($v in $resp.value) { $results.Add($v) } }
+        # the last page has no @odata.nextLink property at all (an error under StrictMode if accessed directly)
+        $uri = if ($resp.PSObject.Properties['@odata.nextLink']) { $resp.'@odata.nextLink' } else { $null }
     }
     return $results
 }
@@ -124,13 +125,19 @@ try {
     if ($intune.Count -eq 0) { throw 'Intune returned 0 devices - refusing to overwrite data file.' }
 
     # ----- SharePoint register + documents -----
-    $register = @(); $docs = @()
+    $register = @(); $docs = @(); $licItems = @()
     $sp = $cfg.sharePoint
+    $base = "https://graph.microsoft.com/v1.0/sites/$($sp.siteId)/lists"
+    $lc = $null
+    if ($cfg.PSObject.Properties['licenses'] -and $cfg.licenses.enabled) { $lc = $cfg.licenses }
     if ($sp.enabled) {
-        $base = "https://graph.microsoft.com/v1.0/sites/$($sp.siteId)/lists"
         $register = Invoke-GraphPaged "$base/$($sp.registerListId)/items?`$expand=fields&`$top=999"
         $docs     = Invoke-GraphPaged "$base/$($sp.documentsListId)/items?`$expand=fields&`$top=999"
         Write-Log "Register rows: $($register.Count); documents: $($docs.Count)"
+        if ($lc) {
+            $licItems = Invoke-GraphPaged "$base/$($lc.listId)/items?`$expand=fields&`$top=999"
+            Write-Log "License/certificate rows: $($licItems.Count)"
+        }
     }
 
     # index register by serial and by asset tag
@@ -152,6 +159,12 @@ try {
     foreach ($k in $regBySerial.Keys) { [void]$allKeys.Add($k) }
     foreach ($k in $regByTag.Keys)    { [void]$allKeys.Add($k) }
     foreach ($i in $intune) { $k = Normalize-Key $i.serialNumber; if ($k) { [void]$allKeys.Add($k) } }
+    # license/certificate documents are matched on the item's name or reference
+    if ($lc) {
+        foreach ($li in $licItems) {
+            foreach ($n in @($lc.fields.name, $lc.fields.reference)) { $k = Normalize-Key (Get-Field $li.fields $n); if ($k) { [void]$allKeys.Add($k) } }
+        }
+    }
 
     $orphanDocs = New-Object System.Collections.Generic.List[object]
     foreach ($d in $docs) {
@@ -295,6 +308,68 @@ try {
         })
     }
 
+    # ----- licenses & certificates (manual SharePoint list) -----
+    $licenses = New-Object System.Collections.Generic.List[object]
+    if ($lc) {
+        $lf = $lc.fields
+        $userByEmail = @{}
+        foreach ($i in $intune) { $e = Normalize-Key $i.userPrincipalName; if ($e -and $i.userDisplayName) { $userByEmail[$e] = $i.userDisplayName } }
+        $assetByKey = @{}
+        foreach ($a in $assets) {
+            foreach ($k in @($a.serial, $a.assetTag, $a.deviceName)) { $nk = Normalize-Key $k; if ($nk -and -not $assetByKey.ContainsKey($nk)) { $assetByKey[$nk] = $a } }
+        }
+        function Split-Keys($raw) {
+            if (-not $raw) { return @() }
+            return @(([string]$raw) -split '[;,\r\n]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        }
+        foreach ($li in $licItems) {
+            $f = $li.fields
+            $assign = New-Object System.Collections.Generic.List[object]
+            foreach ($k in (Split-Keys (Get-Field $f $lf.assignedUsers))) {
+                $nk = Normalize-Key $k
+                if ($userByEmail.ContainsKey($nk)) { $assign.Add([ordered]@{ type = 'user'; key = $k; label = $userByEmail[$nk]; assetId = $null; resolved = $true }) }
+                else { $assign.Add([ordered]@{ type = 'user'; key = $k; label = $k; assetId = $null; resolved = $false }) }
+            }
+            foreach ($k in (Split-Keys (Get-Field $f $lf.assignedDevices))) {
+                $nk = Normalize-Key $k
+                if ($assetByKey.ContainsKey($nk)) {
+                    $a = $assetByKey[$nk]
+                    $lbl = if ($a.deviceName) { $a.deviceName } elseif ($a.assetTag) { $a.assetTag } else { $k }
+                    $assign.Add([ordered]@{ type = 'device'; key = $k; label = $lbl; assetId = $a.id; resolved = $true })
+                } else { $assign.Add([ordered]@{ type = 'device'; key = $k; label = $k; assetId = $null; resolved = $false }) }
+            }
+            foreach ($k in (Split-Keys (Get-Field $f $lf.assignedResources))) {
+                $assign.Add([ordered]@{ type = 'resource'; key = $k; label = $k; assetId = $null; resolved = $true })
+            }
+            $name = [string](Get-Field $f $lf.name)
+            $ref  = [string](Get-Field $f $lf.reference)
+            $ldocs = @()
+            foreach ($nk in @((Normalize-Key $name), (Normalize-Key $ref))) { if ($nk -and $docsByKey.ContainsKey($nk)) { $ldocs += $docsByKey[$nk] } }
+            $seats = Get-Field $f $lf.seatsTotal
+            $licenses.Add([ordered]@{
+                id          = "lic-$($li.id)"
+                name        = $name
+                itemType    = [string](Get-Field $f $lf.itemType)
+                subtype     = [string](Get-Field $f $lf.subtype)
+                vendor      = [string](Get-Field $f $lf.vendor)
+                reference   = $ref
+                seatsTotal  = if ($seats) { [int]$seats } else { 1 }
+                seatsUsed   = $assign.Count
+                startDate   = To-DateOnly (Get-Field $f $lf.startDate)
+                expiryDate  = To-DateOnly (Get-Field $f $lf.expiryDate)
+                autoRenew   = [bool](Get-Field $f $lf.autoRenew)
+                cost        = Get-Field $f $lf.cost
+                owner       = [string](Get-Field $f $lf.owner)
+                status      = if (Get-Field $f $lf.status) { [string](Get-Field $f $lf.status) } else { 'Active' }
+                renewedBy   = $(if (Get-Field $f $lf.renewedBy) { "lic-$(Get-Field $f $lf.renewedBy)" } else { $null })
+                assignments = $assign
+                documents   = $ldocs
+                source      = 'manual'
+            })
+        }
+        Write-Log "Licenses/certificates built: $($licenses.Count)"
+    }
+
     # ----- change tracking vs previous run -----
     $history = @()
     if (Test-Path $historyPath) { try { $history = @(Get-Content -Raw $historyPath | ConvertFrom-Json) } catch { $history = @() } }
@@ -319,6 +394,15 @@ try {
                     $history += [ordered]@{ at = $stamp; assetId = $p.id; label = "$($p.deviceName) $($p.serial)"; event = 'removed'; detail = "last user: $($p.user)" }
                 }
             }
+            if ($prev.PSObject.Properties['licenses']) {
+                $prevLic = @{}; foreach ($p in $prev.licenses) { $prevLic[$p.id] = $p }
+                $curLic = @{};  foreach ($l in $licenses) { $curLic[$l.id] = $l }
+                foreach ($l in $licenses) {
+                    if (-not $prevLic.ContainsKey($l.id)) { $history += [ordered]@{ at = $stamp; assetId = $l.id; label = "License/cert: $($l.name)"; event = 'added'; detail = "expires $($l.expiryDate)" } }
+                    elseif ("$($prevLic[$l.id].expiryDate)" -ne "$($l.expiryDate)") { $history += [ordered]@{ at = $stamp; assetId = $l.id; label = "License/cert: $($l.name)"; event = 'expiry changed'; detail = "$($prevLic[$l.id].expiryDate) -> $($l.expiryDate)" } }
+                }
+                foreach ($p in $prev.licenses) { if (-not $curLic.ContainsKey($p.id)) { $history += [ordered]@{ at = $stamp; assetId = $p.id; label = "License/cert: $($p.name)"; event = 'removed'; detail = '' } } }
+            }
         } catch { Write-Log "Diff against previous file failed: $($_.Exception.Message)" 'WARN' }
     }
     if ($history.Count -gt [int]$cfg.maxHistoryEntries) { $history = $history[($history.Count - [int]$cfg.maxHistoryEntries)..($history.Count - 1)] }
@@ -329,7 +413,9 @@ try {
         generatedAt  = $now.ToUniversalTime().ToString('o')
         source       = 'intune+sharepoint'
         isSample     = $false
+        licenses     = $licenses
         config       = [ordered]@{
+            expiry                = $(if ($cfg.PSObject.Properties['expiry']) { $cfg.expiry } else { [ordered]@{ warnDays = 60; critDays = 30 } })
             staleAfterDays        = $staleDays
             intunePortalDeviceUrl = $cfg.ui.intunePortalDeviceUrl
             sharePointLibraryUrl  = $sp.libraryUrl

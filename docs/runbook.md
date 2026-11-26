@@ -21,6 +21,11 @@ WarrantyEnd (date), CostCentre, Department, Location, LifecycleStatus (choice: I
 **Library `Asset Documents`** with columns `AssetKey` (multi-line plain text: serial numbers and/or asset tags, separated by `;` or new lines – one invoice can list many devices), `DocType` (choice: Invoice, Warranty, Delivery note, Contract/Lease, Handover form, Repair report, Disposal certificate), `ValidUntil` (date).
 Fallback: if AssetKey is empty, a file name starting with a known serial/tag (`SN123456_Invoice.pdf`) is matched automatically.
 
+**List `Licenses & Certificates`** (one row per license/certificate – including S/MIME and other certs that live outside Entra). Column internal names must match `config.json -> licenses.fields`:
+Title (name, e.g. "S/MIME - Maria Papadopoulou"), ItemType (choice: License / Certificate / Subscription / Other), Subtype (choice: S/MIME, TLS/SSL, Code signing, Client auth/VPN, Perpetual, Subscription, Maintenance, Other), Vendor (vendor or issuing CA), Reference (serial/thumbprint/order no.), SeatsTotal (number, default 1), StartDate, ExpiryDate, AutoRenew (yes/no), RenewalCost, Owner (person responsible for renewal – use their e-mail/UPN if you want them mailed by the digest), LifecycleStatus (choice: Active / Renewed / Revoked / Retired), RenewedBy (lookup to this same list; exposed to Graph as `RenewedByLookupId`), and three multi-line plain-text columns **AssignedUsers** (UPN/e-mail, one per line or `;`), **AssignedDevices** (serial, asset tag or device name) and **AssignedResources** (free text: servers, shared mailboxes, websites…).
+Seats used = number of assignees. Items with status Renewed/Revoked/Retired are never coloured or alerted. Documents for an item go into `Asset Documents` with AssetKey = the item's Title or Reference.
+**Never store license keys or private keys in SharePoint** – keep them in the password manager and put only a reference in `Reference`.
+
 Get IDs: `GET /sites/{hostname}:/sites/Assets` (site id) and `GET /sites/{siteId}/lists?$select=id,displayName`.
 
 ## 3. Server
@@ -41,6 +46,18 @@ $p = New-ScheduledTaskPrincipal -UserId 'DOMAIN\svc-assetsync$' -LogonType Passw
 $s = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 10) -StartWhenAvailable
 Register-ScheduledTask -TaskName 'AssetSync' -Action $a -Trigger $t -Principal $p -Settings $s
 ```
+
+### 5b. Expiry digest (daily)
+`scripts\Send-ExpiryDigest.ps1` reads `devices.json` and notifies when a license/certificate reaches 60 / 30 / 14 / 7 days before expiry (`digest.thresholds`) and when it expires. Each stage is sent once per item and expiry date (state in `data\alert-state.json`); changing the expiry date (renewal) re-arms the item. It also warns once a day if `devices.json` is older than `digest.maxDataAgeHours`.
+```powershell
+$a = New-ScheduledTaskAction -Execute 'pwsh.exe' -Argument '-NoProfile -File D:\AssetMgmt\scripts\Send-ExpiryDigest.ps1'
+$t = New-ScheduledTaskTrigger -Daily -At 7:30
+Register-ScheduledTask -TaskName 'AssetExpiryDigest' -Action $a -Trigger $t -Principal $p -Settings $s   # same principal/settings as above
+```
+- **Teams:** put a webhook URL in `alerts.teamsWebhookUrl` (the script posts `{"text": "..."}`; if you use a Power Automate *Workflows* webhook, adapt its trigger to accept that payload).
+- **E-mail (optional):** set `digest.email.enabled=true`, `from`, `to`, `notifyOwners`. Needs the Graph application permission `Mail.Send` – restrict it to the one sender mailbox with an Exchange *application access policy* (`New-ApplicationAccessPolicy`), otherwise the app could send as anyone.
+- Test without sending anything: `pwsh scripts\Send-ExpiryDigest.ps1 -DryRun`.
+- Colours in the web app use `expiry.warnDays` (amber, default 60) and `expiry.critDays` (red, default 30); expired items are shown in strong red.
 
 ## 6. First run / verification
 - Run the script by hand as the service account. Check `logs\asset-sync.log` and `web\data\devices.json`.

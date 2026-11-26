@@ -103,9 +103,53 @@ hist = [
     {"at": (now - dt.timedelta(days=6)).isoformat(), "assetId": assets[20]["id"], "label": assets[20]["deviceName"], "event": "added", "detail": ""},
 ]
 
+# ---- licenses & certificates ----
+def email(name):
+    return name.lower().replace(" ", ".") + "@contoso.com"
+
+
+def u(name):
+    return {"type": "user", "key": email(name), "label": name, "assetId": None, "resolved": True}
+
+
+def dev(a):
+    return {"type": "device", "key": a["serial"], "label": a["deviceName"], "assetId": a["id"], "resolved": True}
+
+
+def res(name):
+    return {"type": "resource", "key": name, "label": name, "assetId": None, "resolved": True}
+
+
+def lic(i, name, itype, sub, vendor, ref, seats, days, assigns, owner="John Smith", status="Active", cost=None, renewed=None, auto=False):
+    exp = today + dt.timedelta(days=days) if days is not None else None
+    return {"id": f"lic-{i}", "name": name, "itemType": itype, "subtype": sub, "vendor": vendor, "reference": ref,
+            "seatsTotal": seats, "seatsUsed": len(assigns),
+            "startDate": d(exp - dt.timedelta(days=365)) if exp else None, "expiryDate": d(exp), "autoRenew": auto,
+            "cost": cost, "owner": owner, "status": status, "renewedBy": renewed, "assignments": assigns,
+            "documents": [{"name": f"{name.split()[0]}_Certificate_Public.cer" if itype == "Certificate" else f"{name.split()[0]}_Order.pdf",
+                           "docType": "Contract/Lease" if itype != "Certificate" else "Certificate", "validUntil": d(exp),
+                           "webUrl": "https://contoso.sharepoint.com/sites/Assets/Asset%20Documents/" + str(i) + ".pdf"}] if i % 2 else [],
+            "source": "manual"}
+
+
+win = [a for a in assets if a["os"] == "Windows"]
+licenses = [
+    lic(1, "Microsoft 365 E3", "License", "Subscription", "Microsoft", "EA-884213", 25, 200, [u(p[0]) for p in people[:10]], cost=9000, auto=True),
+    lic(2, "Adobe Acrobat Pro", "License", "Subscription", "Adobe", "ADB-2291", 8, 45, [u(p[0]) for p in people[:6]], owner="Elena Georgiou", cost=1700),
+    lic(3, "S/MIME - Maria Papadopoulou", "Certificate", "S/MIME", "GlobalSign", "SN 4F:2A:9C:11", 1, 10, [u("Maria Papadopoulou")], owner="Maria Papadopoulou", cost=45),
+    lic(4, "S/MIME - John Smith", "Certificate", "S/MIME", "GlobalSign", "SN 7A:11:03:E8", 1, 400, [u("John Smith")], cost=45),
+    lic(5, "Wildcard TLS *.contoso.com", "Certificate", "TLS/SSL", "DigiCert", "THUMB 91AC…D3", 3, 25, [res("web-prod-01"), res("web-prod-02"), res("mail gateway")], cost=520),
+    lic(6, "Code signing certificate", "Certificate", "Code signing", "Sectigo", "ORDER 55102", 1, -3, [res("Build server")], owner="Dimitris Alexiou", cost=380),
+    lic(7, "VPN client certificate", "Certificate", "Client auth/VPN", "Internal CA", "TEMPLATE VPN-Client", 5, 120, [dev(a) for a in win[:2]]),
+    lic(8, "Veeam Backup & Replication", "License", "Maintenance", "Veeam", "VBR-77120", 2, 75, [res("Backup server"), res("DR site host")], cost=2300),
+    lic(9, "S/MIME - Maria Papadopoulou (old)", "Certificate", "S/MIME", "GlobalSign", "SN 11:22:33:44", 1, -40, [u("Maria Papadopoulou")], owner="Maria Papadopoulou", status="Renewed", renewed="lic-3"),
+    lic(10, "Project Server licenses", "License", "Perpetual", "Microsoft", "", 5, None, [], owner=""),
+]
+
 out = {
     "generatedAt": now.isoformat(), "source": "sample", "isSample": True,
-    "config": {"staleAfterDays": 30,
+    "licenses": licenses,
+    "config": {"staleAfterDays": 30, "expiry": {"warnDays": 60, "critDays": 30},
                "intunePortalDeviceUrl": "https://intune.microsoft.com/#view/Microsoft_Intune_Devices/DeviceSettingsMenuBlade/~/overview/mdmDeviceId/{intuneId}",
                "sharePointLibraryUrl": "https://contoso.sharepoint.com/sites/Assets/Asset%20Documents"},
     "assets": assets,

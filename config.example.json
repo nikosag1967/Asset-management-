@@ -43,6 +43,46 @@
     }
   },
 
+  "licenses": {
+    "enabled": true,
+    "listId": "<Licenses & Certificates list GUID>",
+    "fields": {
+      "name": "Title",
+      "itemType": "ItemType",
+      "subtype": "Subtype",
+      "vendor": "Vendor",
+      "reference": "Reference",
+      "seatsTotal": "SeatsTotal",
+      "startDate": "StartDate",
+      "expiryDate": "ExpiryDate",
+      "autoRenew": "AutoRenew",
+      "cost": "RenewalCost",
+      "owner": "Owner",
+      "status": "LifecycleStatus",
+      "renewedBy": "RenewedByLookupId",
+      "assignedUsers": "AssignedUsers",
+      "assignedDevices": "AssignedDevices",
+      "assignedResources": "AssignedResources"
+    }
+  },
+
+  "expiry": {
+    "warnDays": 60,
+    "critDays": 30
+  },
+
+  "digest": {
+    "thresholds": [60, 30, 14, 7],
+    "statePath": "..\\data\\alert-state.json",
+    "maxDataAgeHours": 24,
+    "email": {
+      "enabled": false,
+      "from": "assets@contoso.com",
+      "to": ["it-team@contoso.com"],
+      "notifyOwners": true
+    }
+  },
+
   "alerts": {
     "teamsWebhookUrl": ""
   },
